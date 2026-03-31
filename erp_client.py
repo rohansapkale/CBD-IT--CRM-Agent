@@ -1,11 +1,12 @@
 import requests
 import json
 import re
-
+import os
 ERP_URL = "http://127.0.0.1:8000/api/resource/Lead"
 
-API_KEY = "270d090d83eeeb5"
-API_SECRET = "431841da17e107e"
+
+API_KEY = os.getenv("API_KEY")
+API_SECRET = os.getenv("API_SECRET")
 
 headers = {
     "Authorization": f"token {API_KEY}:{API_SECRET}",
