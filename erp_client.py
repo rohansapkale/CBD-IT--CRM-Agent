@@ -2,8 +2,11 @@ import requests
 import json
 import re
 import os
+from dotenv import load_dotenv
+
 ERP_URL = "http://127.0.0.1:8000/api/resource/Lead"
 
+load_dotenv()
 
 API_KEY = os.getenv("API_KEY")
 API_SECRET = os.getenv("API_SECRET")
@@ -115,31 +118,24 @@ def update_lead_status(data, new_status):
         print("❌ Invalid status")
         return
 
-    search_value = data.get("company") or data.get("name")
+    lead = find_lead(data)
 
-    filters = json.dumps([
-        ["lead_name", "like", f"%{search_value}%"]
-    ])
-
-    url = f"{ERP_URL}?filters={filters}"
-
-    res = requests.get(url, headers=headers)
-    leads = res.json().get("data", [])
-
-    if not leads:
+    if not lead:
         print("❌ No lead found")
         return
 
-    lead_id = leads[0]["name"]
+    lead_id = lead["name"]
 
-    update_url = f"{ERP_URL}/{lead_id}"
+    print("🎯 Updating:", lead_id)
+
+    url = f"{ERP_URL}/{lead_id}"
 
     payload = {"status": new_status}
 
-    res = requests.put(update_url, json=payload, headers=headers)
+    res = requests.put(url, json=payload, headers=headers)
 
-    print("✅ Status Updated:", new_status)
-    print(res.text)
+    print("STATUS:", res.status_code)
+    print("RAW:", res.text)
 
 
 # =========================
@@ -228,45 +224,38 @@ def create_quotation(lead, item_name):
     return res.json()
 # FIND LEAD
 # =========================
-def find_lead(search_input):
+def find_lead(data):
 
-    search_input = search_input.lower().strip()
+    search_fields = [
+        ("email_id", data.get("email")),
+        ("mobile_no", data.get("phone")),
+        ("company_name", data.get("company")),
+        ("lead_name", data.get("name")),
+        ("title", data.get("company")),
+    ]
 
-    # ✅ NO FILTERS
-    url = f"{ERP_URL}?fields=[\"name\",\"lead_name\",\"company_name\",\"email_id\",\"mobile_no\",\"status\"]"
+    for field, value in search_fields:
 
-    print("🔍 Fetching all leads...")
+        if not value:
+            continue
 
-    res = requests.get(url, headers=headers)
+        filters = [[field, "like", f"%{value}%"]]
 
-    data = res.json()
+        filters_json = json.dumps(filters)
 
-    print("📦 RAW RESPONSE:", data)   # 🔥 DEBUG LINE
+        url = f"{ERP_URL}?fields=[\"name\",\"lead_name\",\"company_name\",\"status\",\"email_id\",\"mobile_no\"]&filters={filters_json}"
 
-    leads = data.get("data", [])
+        print("🔍 Trying:", url)
 
-    if not leads:
-        print("❌ No leads found in ERP")
-        return None
+        res = requests.get(url, headers=headers)
+        data_res = res.json()
 
-    # -------------------------
-    # SMART MATCHING
-    # -------------------------
-    for lead in leads:
+        leads = data_res.get("data", [])
 
-        values = [
-            str(lead.get("lead_name", "")).lower(),
-            str(lead.get("company_name", "")).lower(),
-            str(lead.get("email_id", "")).lower(),
-            str(lead.get("mobile_no", "")).lower()
-        ]
+        if leads:
+            print("✅ Match Found:", leads[0])
+            return leads[0]
 
-        for val in values:
-            if val and (search_input in val or val in search_input):
-                print("✅ Match Found:", lead)
-                return lead
-
-    print("❌ No matching lead found")
     return None
 # =========================
 # MAP ITEM
