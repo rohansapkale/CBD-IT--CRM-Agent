@@ -3,11 +3,13 @@ import json
 import re
 import os
 from dotenv import load_dotenv
+from email_utils import send_email
 
 # =========================
 # CONFIG
 # =========================
 ERP_URL = "http://127.0.0.1:8000/api/resource"
+
 load_dotenv()
 
 API_KEY = os.getenv("API_KEY")
@@ -43,8 +45,8 @@ def create_lead(data):
     payload = {k: v for k, v in payload.items() if v}
 
     res = requests.post(url, json=payload, headers=headers)
-
     print("📦 Lead Created:", res.text)
+
     return res.json()
 
 
@@ -67,7 +69,7 @@ def find_lead(data):
 
         filters = json.dumps([[field, "like", f"%{value}%"]])
 
-        full_url = f'{url}?fields=["name","lead_name","company_name","status"]&filters={filters}'
+        full_url = f'{url}?fields=["name","lead_name","company_name","status","email_id"]&filters={filters}'
 
         res = requests.get(full_url, headers=headers)
         leads = res.json().get("data", [])
@@ -93,14 +95,10 @@ def update_lead_status(data, new_status):
         print("❌ No lead found")
         return
 
-    lead_id = lead["name"]
-
-    url = f"{ERP_URL}/Lead/{lead_id}"
-
+    url = f"{ERP_URL}/Lead/{lead['name']}"
     payload = {"status": new_status}
 
     res = requests.put(url, json=payload, headers=headers)
-
     print("🔁 Status Updated:", res.text)
 
 
@@ -111,11 +109,9 @@ def get_item_code(item_name):
     url = f"{ERP_URL}/Item"
 
     filters = json.dumps([["item_name", "=", item_name]])
-
     full_url = f'{url}?fields=["item_code","item_name"]&filters={filters}'
 
     res = requests.get(full_url, headers=headers)
-
     items = res.json().get("data", [])
 
     if items:
@@ -128,16 +124,15 @@ def get_item_code(item_name):
 # CREATE QUOTATION
 # =========================
 def create_quotation(lead, item_code, qty, rate):
+
     url = f"{ERP_URL}/Quotation"
 
     payload = {
         "doctype": "Quotation",
         "quotation_to": "Lead",
         "party_name": lead["name"],
-
         "transaction_date": "2026-04-01",
         "valid_till": "2026-04-10",
-
         "items": [
             {
                 "item_code": item_code,
@@ -151,9 +146,35 @@ def create_quotation(lead, item_code, qty, rate):
 
     res = requests.post(url, json=payload, headers=headers)
 
-    print("📄 Quotation Response:", res.text)
+    print("STATUS:", res.status_code)
+    print("RAW:", res.text)
 
-    return res.json()
+    response = res.json()
+
+    # ✅ EMAIL TRIGGER (ONLY ON SUCCESS)
+    if response.get("data"):
+        quotation_name = response["data"]["name"]
+
+        print("📄 Quotation Created:", quotation_name)
+
+        pdf = get_quotation_pdf(quotation_name)
+
+        if pdf and lead.get("email_id"):
+            send_email(
+            to_email=lead["email_id"],
+            subject="Your Quotation",
+            body=f"""
+Hello {lead.get('lead_name')},
+
+Please find attached your quotation.
+
+Quotation ID: {quotation_name}
+
+Thank you.
+""",
+            attachment=pdf,
+            filename=f"{quotation_name}.pdf"
+        )
 
 
 # =========================
@@ -168,14 +189,9 @@ def handle_quotation_flow(text):
         return
 
     company = match.group(1).strip()
-
     print("📌 Searching for:", company)
 
-    data = {
-        "company": company
-    }
-
-    lead = find_lead(data)
+    lead = find_lead({"company": company})
 
     if not lead:
         print("❌ Lead not found")
@@ -214,19 +230,34 @@ def handle_quotation_flow(text):
         print("❌ Invalid choice")
         return
 
-    # GET ITEM CODE
     item_code = get_item_code(item_name)
 
     if not item_code:
         print("❌ Item not found in ERP:", item_name)
         return
 
-    # 🔥 NEW FEATURE: USER INPUT
     try:
         qty = int(input("Enter Quantity: "))
         rate = float(input("Enter Rate: "))
     except ValueError:
-        print("❌ Invalid number input")
+        print("❌ Invalid input")
         return
 
     create_quotation(lead, item_code, qty, rate)
+
+def get_quotation_pdf(quotation_name):
+    url = "http://127.0.0.1:8000/api/method/frappe.utils.print_format.download_pdf"
+
+    params = {
+        "doctype": "Quotation",
+        "name": quotation_name,
+        "format": "Standard"
+    }
+
+    res = requests.get(url, params=params, headers=headers)
+
+    if res.status_code == 200:
+        return res.content  # binary PDF
+    else:
+        print("❌ Failed to fetch PDF:", res.text)
+        return None
